@@ -1,0 +1,13 @@
+kafka:
+  bootstrap_servers: [ 10.202.xxx:9092 ]
+  topic: odlConsumer-adx-rr
+  consumer:
+    group_id: odlConsumer-adx-rr
+    max_poll_records: 200
+    auto_offset_reset: latest
+obs:
+  send_file_size: 1048576 #单位字节
+  endpoint: https://obs.cn-north-4.myhuaweicloud.com
+  bucket: b1
+
+
