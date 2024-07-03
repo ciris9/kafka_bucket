@@ -47,6 +47,7 @@ func initKafka() {
 
 func initObs() {
 	ObsConfig.FilePrefix = os.Getenv("MY_POD_NAME")
+
 	ObsConfig.Endpoint = viper.GetString("obs.endpoint")
 	ObsConfig.Bucket = viper.GetString("obs.bucket")
 	ObsConfig.SendFileSize = viper.GetInt("obs.send_file_size")

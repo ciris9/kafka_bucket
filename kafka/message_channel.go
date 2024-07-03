@@ -7,6 +7,7 @@ import (
 	"github.com/mholt/archiver/v4"
 	"kafka-bucket/config"
 	"kafka-bucket/obs"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -16,28 +17,49 @@ import (
 const (
 	defaultMessageChannelSize = 200000
 	defaultSendFileSize       = 1048576
+	defaultWorkerNumber       = 3
 )
 
-type MessageChannel struct {
-	msgChan chan *sarama.Message
-	quit    chan bool
+type messageChannel struct {
+	msgChan chan *sarama.ConsumerMessage
 }
 
-func NewMessageChannel() *MessageChannel {
-	return &MessageChannel{
-		msgChan: make(chan *sarama.Message, defaultMessageChannelSize),
-		quit:    make(chan bool),
+var MsgChan *messageChannel
+
+func init() {
+	MsgChan = newMessageChannel()
+	MsgChan.StartWork(defaultWorkerNumber)
+}
+
+func newMessageChannel() *messageChannel {
+	return &messageChannel{
+		msgChan: make(chan *sarama.ConsumerMessage, defaultMessageChannelSize),
 	}
 }
 
-func (c *MessageChannel) ConsumeWorker(workerId int) error {
+func (c *messageChannel) PushMessage(message *sarama.ConsumerMessage) {
+	c.msgChan <- message
+}
+
+func (c *messageChannel) StartWork(workNumber int) {
+	for i := 1; i <= workNumber; i++ {
+		go func() {
+			if err := c.consumeWorker(i); err != nil {
+				log.Println(err)
+				return
+			}
+		}()
+	}
+}
+
+func (c *messageChannel) consumeWorker(workerId int) error {
 	var file *os.File
 	filePath := "./file" + strconv.Itoa(workerId)
-	file, err := os.OpenFile(filePath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0666)
-	defer file.Close()
+	file, err := os.OpenFile(filePath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.ModePerm)
 	if err != nil {
 		return err
 	}
+	defer file.Close()
 
 	for msg := range c.msgChan {
 		fileInfo, err := file.Stat()
@@ -52,7 +74,6 @@ func (c *MessageChannel) ConsumeWorker(workerId int) error {
 				return err
 			}
 		}
-
 		if _, err = file.Write(msg.Value); err != nil {
 			return err
 		}
@@ -68,7 +89,11 @@ func sendFileToObs(filePath string, workerId int) error {
 	if err != nil {
 		return err
 	}
-	file, err := os.OpenFile(compressFileName, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0666)
+	file, err := os.OpenFile(compressFileName, os.O_WRONLY|os.O_CREATE, os.ModePerm)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
 	formatPath := time.Now().Format("year=2006/month=01/day=02/hour=15")
 	input := &huawei_obs.PutObjectInput{}
 	input.Bucket = config.ObsConfig.Bucket
@@ -78,11 +103,15 @@ func sendFileToObs(filePath string, workerId int) error {
 	if err != nil {
 		return err
 	}
+	if err := os.Remove(compressFileName); err != nil {
+		return err
+	}
 	return nil
 }
 
 func compressFile(filePath string, workerId int) (string, error) {
 	paths := strings.Split(filePath, "/")
+	log.Println(filePath)
 	files, err := archiver.FilesFromDisk(nil, map[string]string{
 		filePath: paths[len(paths)-1],
 	})
@@ -91,10 +120,15 @@ func compressFile(filePath string, workerId int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer out.Close()
+
 	format := archiver.CompressedArchive{
 		Compression: archiver.Bz2{},
-		Archival:    archiver.Zip{},
+		Archival:    archiver.Tar{},
 	}
 	err = format.Archive(context.Background(), out, files)
+	if err != nil {
+		return "", err
+	}
 	return filename, nil
 }
