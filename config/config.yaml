@@ -6,7 +6,7 @@ kafka:
     max_poll_records: 200
     auto_offset_reset: latest
 obs:
-  send_file_size: 1048576 #单位字节
+  send_file_size: 6000 #单位字节
   endpoint: https://obs.cn-north-4.myhuaweicloud.com
   bucket: b1
 

@@ -59,7 +59,7 @@ func (c *messageChannel) consumeWorker(workerId int) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer CloseFileWithPanic(file)
 
 	for msg := range c.msgChan {
 		fileInfo, err := file.Stat()
@@ -84,34 +84,37 @@ func (c *messageChannel) consumeWorker(workerId int) error {
 	return nil
 }
 
-func sendFileToObs(filePath string, workerId int) error {
+func sendFileToObs(filePath string, workerId int) (err error) {
 	compressFileName, err := compressFile(filePath, workerId)
 	if err != nil {
 		return err
 	}
-	file, err := os.OpenFile(compressFileName, os.O_WRONLY|os.O_CREATE, os.ModePerm)
+	file, err := os.Open("./" + compressFileName)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer CloseFileWithPanic(file)
 	formatPath := time.Now().Format("year=2006/month=01/day=02/hour=15")
 	input := &huawei_obs.PutObjectInput{}
 	input.Bucket = config.ObsConfig.Bucket
 	input.Key = formatPath
 	input.Body = file
-	_, err = obs.Client.PutObject(input)
-	if err != nil {
-		return err
+
+	//error retry
+	cnt := 3
+	for cnt > 0 {
+		_, err = obs.Client.PutObject(input)
+		if err != nil {
+			cnt--
+		} else {
+			break
+		}
 	}
-	if err := os.Remove(compressFileName); err != nil {
-		return err
-	}
-	return nil
+	return
 }
 
 func compressFile(filePath string, workerId int) (string, error) {
 	paths := strings.Split(filePath, "/")
-	log.Println(filePath)
 	files, err := archiver.FilesFromDisk(nil, map[string]string{
 		filePath: paths[len(paths)-1],
 	})
@@ -120,7 +123,7 @@ func compressFile(filePath string, workerId int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer out.Close()
+	defer CloseFileWithPanic(out)
 
 	format := archiver.CompressedArchive{
 		Compression: archiver.Bz2{},
@@ -131,4 +134,16 @@ func compressFile(filePath string, workerId int) (string, error) {
 		return "", err
 	}
 	return filename, nil
+}
+
+func CloseFileWithPanic(file *os.File) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Println("close file panic: ", r)
+		}
+	}()
+	err := file.Close()
+	if err != nil {
+		log.Panicln(err)
+	}
 }
